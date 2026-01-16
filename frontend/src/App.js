@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Login from './components/Login';
 import Register from './components/Register';
+import { isValidYouTubeUrl } from './utils/youtubeUtils';
 import './App.css';
 import {
     Chart as ChartJS,
@@ -45,6 +46,10 @@ function Dashboard({ onLogout }) {
     const [results, setResults] = useState(null);
     const [error, setError] = useState(null);
     const [systemHealth, setSystemHealth] = useState(null);
+    const [urlInput, setUrlInput] = useState('');
+    const [urlValid, setUrlValid] = useState(null); // null, true, or false
+    const [youtubeMetadata, setYoutubeMetadata] = useState(null);
+    const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
 
     useEffect(() => {
         fetch(`${API_BASE_URL}/health`)
@@ -53,12 +58,89 @@ function Dashboard({ onLogout }) {
             .catch((err) => console.error('Health check failed:', err));
     }, []);
 
+    const handleUrlChange = async (e) => {
+        const url = e.target.value;
+        setUrlInput(url);
+        setResults(null);
+        setError(null);
+
+        if (url.trim() === '') {
+            setUrlValid(null);
+            setYoutubeMetadata(null);
+            return;
+        }
+
+        const isValid = isValidYouTubeUrl(url);
+        setUrlValid(isValid);
+
+        if (isValid) {
+            // Clear file preview when entering YouTube URL
+            setSelectedFile(null);
+            setPreviewUrl(null);
+
+            // Fetch metadata
+            setIsFetchingMetadata(true);
+            setYoutubeMetadata(null);
+            try {
+                const response = await fetch(`${API_BASE_URL}/youtube/metadata`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ youtube_url: url }),
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    setYoutubeMetadata(data.metadata);
+                } else {
+                    const errorData = await response.json();
+                    setError(errorData.detail || 'Failed to fetch video info');
+                }
+            } catch (err) {
+                setError('Failed to fetch video metadata');
+            } finally {
+                setIsFetchingMetadata(false);
+            }
+        } else {
+            setYoutubeMetadata(null);
+        }
+    };
+
+    const handleUrlSubmit = async () => {
+        if (!urlValid) return;
+        setIsAnalyzing(true);
+        setError(null);
+        setResults(null);
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/detect_youtube`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ youtube_url: urlInput }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Analysis failed');
+            }
+
+            const data = await response.json();
+            setResults(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
     const handleFileChange = (event) => {
         const file = event.target.files[0];
         if (file) {
             setSelectedFile(file);
             setResults(null);
             setError(null);
+            setUrlInput('');
+            setUrlValid(null);
+            setYoutubeMetadata(null);
             const objectUrl = URL.createObjectURL(file);
             setPreviewUrl(objectUrl);
             if (file.type.startsWith('video/')) {
@@ -250,16 +332,86 @@ function Dashboard({ onLogout }) {
             </header>
 
             <main className="container">
-                <div style={{ textAlign: 'center', marginBottom: '3rem', paddingTop: '2rem' }}>
-                    <h2 className="text-gradient" style={{ fontSize: '3rem', fontWeight: '800', marginBottom: '1rem', lineHeight: 1.2 }}>
-                        Detect Deepfakes with<br />Enterprise Precision
+                <div style={{ textAlign: 'center', marginBottom: '2rem', paddingTop: '2rem' }}>
+                    <h2 className="text-gradient" style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '0.75rem', lineHeight: 1.2 }}>
+                        Detect Deepfakes Instantly
                     </h2>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '1.25rem', maxWidth: '600px', margin: '0 auto' }}>
-                        Upload your media to analyze it against our multi-model ensemble engine.
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', maxWidth: '500px', margin: '0 auto' }}>
+                        Paste a YouTube link or upload media to analyze
                     </p>
                 </div>
 
-                <div className="card" style={{ maxWidth: '800px', margin: '0 auto', padding: '3rem', borderStyle: 'dashed', borderWidth: '2px', borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(30, 41, 59, 0.5)' }}>
+                {/* URL Input Section */}
+                <div className="card" style={{ maxWidth: '700px', margin: '0 auto', padding: '2rem' }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                        <div style={{ flex: 1, position: 'relative' }}>
+                            <input
+                                type="text"
+                                placeholder="Paste YouTube URL here..."
+                                value={urlInput}
+                                onChange={handleUrlChange}
+                                style={{
+                                    width: '100%',
+                                    padding: '1rem 1.25rem',
+                                    paddingRight: '3rem',
+                                    fontSize: '1.1rem',
+                                    backgroundColor: 'var(--bg-primary)',
+                                    border: `2px solid ${urlValid === true ? 'var(--success)' : urlValid === false ? 'var(--danger)' : 'rgba(255,255,255,0.1)'}`,
+                                    borderRadius: 'var(--radius-md)',
+                                    color: 'var(--text-primary)',
+                                    outline: 'none',
+                                    transition: 'border-color 0.2s',
+                                }}
+                                onKeyDown={(e) => e.key === 'Enter' && urlValid && handleUrlSubmit()}
+                            />
+                            {urlValid !== null && (
+                                <span style={{
+                                    position: 'absolute',
+                                    right: '1rem',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    fontSize: '1.25rem',
+                                }}>
+                                    {urlValid ? '✓' : '✗'}
+                                </span>
+                            )}
+                        </div>
+                        <button
+                            className="btn btn-primary"
+                            onClick={handleUrlSubmit}
+                            disabled={!urlValid || isAnalyzing}
+                            style={{
+                                padding: '1rem 1.5rem',
+                                fontSize: '1rem',
+                                opacity: (!urlValid || isAnalyzing) ? 0.5 : 1,
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {isAnalyzing ? 'Analyzing...' : 'Analyze'}
+                        </button>
+                    </div>
+                    {urlValid === false && urlInput.trim() !== '' && (
+                        <p style={{ color: 'var(--danger)', fontSize: '0.875rem', marginTop: '0.5rem' }}>
+                            Please enter a valid YouTube URL (youtube.com/watch, youtube.com/shorts, or youtu.be)
+                        </p>
+                    )}
+                </div>
+
+                {/* Divider */}
+                <div style={{
+                    maxWidth: '700px',
+                    margin: '1.5rem auto',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '1rem'
+                }}>
+                    <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(255,255,255,0.1)' }}></div>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>or upload a file</span>
+                    <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(255,255,255,0.1)' }}></div>
+                </div>
+
+                {/* File Upload Section */}
+                <div className="card" style={{ maxWidth: '700px', margin: '0 auto', padding: '2rem', borderStyle: 'dashed', borderWidth: '2px', borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(30, 41, 59, 0.3)' }}>
                     <input
                         type="file"
                         id="file-upload"
@@ -269,26 +421,27 @@ function Dashboard({ onLogout }) {
                     />
                     <label htmlFor="file-upload" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
                         <div style={{
-                            width: '64px',
-                            height: '64px',
+                            width: '48px',
+                            height: '48px',
                             borderRadius: '50%',
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            marginBottom: '1.5rem',
+                            marginBottom: '1rem',
                             color: 'var(--accent-primary)'
                         }}>
-                            <svg width="32" height="32" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
                         </div>
-                        <span style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-                            {selectedFile ? selectedFile.name : 'Click to Upload or Drag & Drop'}
+                        <span style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '0.25rem' }}>
+                            {selectedFile ? selectedFile.name : 'Click to upload or drag & drop'}
                         </span>
-                        <span style={{ color: 'var(--text-secondary)' }}>Supported formats: JPG, PNG, MP4, AVI</span>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>JPG, PNG, MP4, AVI</span>
                     </label>
                 </div>
 
-                {previewUrl && (
+                {/* File Upload Preview */}
+                {previewUrl && !youtubeMetadata && (
                     <div className="animate-fade-in" style={{ marginTop: '2rem', maxWidth: '800px', margin: '2rem auto 0' }}>
                         <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
                             <div style={{ position: 'relative', width: '100%', height: '400px', backgroundColor: '#000' }}>
@@ -305,10 +458,10 @@ function Dashboard({ onLogout }) {
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                                     <button onClick={handleDemoVideo} className="btn btn-secondary">
-                                        🎬 Demo Video
+                                        Demo Video
                                     </button>
                                     <button onClick={handleDemoAudio} className="btn btn-secondary">
-                                        🎵 Demo Audio
+                                        Demo Audio
                                     </button>
                                     <button
                                         className="btn btn-primary"
@@ -318,6 +471,123 @@ function Dashboard({ onLogout }) {
                                     >
                                         {isAnalyzing ? 'Processing...' : 'Run DeepSafe'}
                                     </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* YouTube Metadata Loading */}
+                {isFetchingMetadata && (
+                    <div className="animate-fade-in" style={{ marginTop: '2rem', maxWidth: '800px', margin: '2rem auto 0' }}>
+                        <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
+                            <div style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Loading video info...</div>
+                            <div style={{ color: 'var(--text-secondary)' }}>Fetching metadata from YouTube</div>
+                        </div>
+                    </div>
+                )}
+
+                {/* YouTube Metadata Preview */}
+                {youtubeMetadata && !isFetchingMetadata && (
+                    <div className="animate-fade-in" style={{ marginTop: '2rem', maxWidth: '800px', margin: '2rem auto 0' }}>
+                        <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
+                            {/* Thumbnail */}
+                            <div style={{ position: 'relative', width: '100%', height: '300px', backgroundColor: '#000' }}>
+                                {youtubeMetadata.thumbnail ? (
+                                    <img
+                                        src={youtubeMetadata.thumbnail}
+                                        alt={youtubeMetadata.title}
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                    />
+                                ) : (
+                                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+                                        No thumbnail available
+                                    </div>
+                                )}
+                                {/* Duration badge */}
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: '1rem',
+                                    right: '1rem',
+                                    backgroundColor: 'rgba(0,0,0,0.8)',
+                                    padding: '0.25rem 0.5rem',
+                                    borderRadius: '4px',
+                                    fontSize: '0.875rem',
+                                    fontWeight: '600'
+                                }}>
+                                    {youtubeMetadata.duration_string || '0:00'}
+                                </div>
+                                {/* Short badge */}
+                                {youtubeMetadata.is_short && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '1rem',
+                                        left: '1rem',
+                                        backgroundColor: 'var(--danger)',
+                                        padding: '0.25rem 0.75rem',
+                                        borderRadius: '4px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: '700',
+                                        textTransform: 'uppercase'
+                                    }}>
+                                        Short
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Video Info */}
+                            <div style={{ padding: '1.5rem', backgroundColor: 'var(--bg-secondary)' }}>
+                                <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem', lineHeight: 1.3 }}>
+                                    {youtubeMetadata.title}
+                                </h3>
+                                <div style={{ display: 'flex', gap: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                                    <span>{youtubeMetadata.channel}</span>
+                                    {youtubeMetadata.view_count && (
+                                        <span>{youtubeMetadata.view_count.toLocaleString()} views</span>
+                                    )}
+                                    {youtubeMetadata.upload_date && (
+                                        <span>{youtubeMetadata.upload_date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}</span>
+                                    )}
+                                </div>
+
+                                {/* Warnings */}
+                                {youtubeMetadata.warnings && youtubeMetadata.warnings.length > 0 && (
+                                    <div style={{
+                                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                                        border: '1px solid rgba(245, 158, 11, 0.3)',
+                                        borderRadius: 'var(--radius-md)',
+                                        padding: '1rem',
+                                        marginBottom: '1rem'
+                                    }}>
+                                        {youtubeMetadata.warnings.map((warning, idx) => (
+                                            <div key={idx} style={{ color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <span style={{ fontSize: '1.25rem' }}>&#9888;</span>
+                                                <span>{warning.message}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Action buttons */}
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                    {youtubeMetadata.warnings && youtubeMetadata.warnings.some(w => w.type === 'duration_exceeded') ? (
+                                        <button
+                                            className="btn btn-secondary"
+                                            disabled
+                                            style={{ opacity: 0.5 }}
+                                        >
+                                            Video Too Long
+                                        </button>
+                                    ) : (
+                                        <button
+                                            className="btn btn-primary"
+                                            onClick={handleUrlSubmit}
+                                            disabled={isAnalyzing}
+                                            style={{ opacity: isAnalyzing ? 0.7 : 1, minWidth: '150px' }}
+                                        >
+                                            {isAnalyzing ? 'Analyzing...' : 'Analyze Video'}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>

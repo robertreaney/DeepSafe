@@ -49,6 +49,7 @@ from fastapi import Depends, status
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from database import init_db, get_db, AnalysisHistory
+from youtube_handler import get_video_metadata, is_valid_youtube_url, extract_video_id
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -1099,6 +1100,46 @@ async def register_user(form_data: OAuth2PasswordRequestForm = Depends()):
 @app.get("/users/me", response_model=User, tags=["Auth"])
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+# --- YouTube Endpoints ---
+class YouTubeURLInput(BaseModel):
+    youtube_url: str
+
+
+@app.post("/youtube/metadata", tags=["YouTube"])
+async def get_youtube_metadata(request: Request, input_data: YouTubeURLInput):
+    """
+    Fetch metadata for a YouTube video without downloading it.
+
+    Returns video title, duration, channel info, thumbnail, and warnings
+    if the video exceeds the 10-minute limit.
+    """
+    req_id = request.state.request_id
+    url = input_data.youtube_url
+
+    if not is_valid_youtube_url(url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid YouTube URL. Please provide a valid youtube.com or youtu.be link."
+        )
+
+    logger.info(f"Request {req_id}: Fetching YouTube metadata for URL: {url[:50]}...")
+
+    metadata = get_video_metadata(url)
+
+    if "error" in metadata:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=metadata["error"]
+        )
+
+    logger.info(f"Request {req_id}: Successfully fetched metadata for video '{metadata.get('title', 'Unknown')[:30]}...'")
+
+    return {
+        "request_id": req_id,
+        "metadata": metadata
+    }
 
 
 @app.post("/detect", tags=["Web UI"], response_model_exclude_none=True)

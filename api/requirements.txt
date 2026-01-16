@@ -14,3 +14,4 @@ rich
 python-jose[cryptography]
 passlib[bcrypt]
 sqlalchemy==2.0.21
+yt-dlp>=2024.0.0
